@@ -14,10 +14,7 @@ import java.util.concurrent.TimeUnit
 
 class JsonFileChangeListener(private val project: Project) {
     private val executor = Executors.newSingleThreadScheduledExecutor()
-    private var lastProcessedCommit: String? = null
-
     init {
-        // Register file system listener
         project.messageBus.connect().subscribe(
             VirtualFileManager.VFS_CHANGES,
             object : BulkFileListener {
@@ -32,7 +29,6 @@ class JsonFileChangeListener(private val project: Project) {
                 }
             }
         )
-        // Initial check
         checkForJsonChanges()
     }
 
@@ -50,13 +46,11 @@ class JsonFileChangeListener(private val project: Project) {
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     if (line?.endsWith(".json", ignoreCase = true) == true) {
-                        jsonFiles.add(line!!)
+                        jsonFiles.add(line)
                     }
                 }
-
                 process.waitFor(5, TimeUnit.SECONDS)
 
-                // Process each JSON file
                 jsonFiles.forEach { jsonFilePath ->
                     val jsonFile = project.baseDir.findFileByRelativePath(jsonFilePath)
                     if (jsonFile != null) {
@@ -64,7 +58,6 @@ class JsonFileChangeListener(private val project: Project) {
                     }
                 }
             } catch (e: Exception) {
-                // Log error or show notification
                 println("Error checking for JSON changes: ${e.message}")
             }
         }, 1, TimeUnit.SECONDS)

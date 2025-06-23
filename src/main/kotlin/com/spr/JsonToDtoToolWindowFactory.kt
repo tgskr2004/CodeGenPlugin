@@ -1,5 +1,3 @@
-// Updated UI to list JSON files with checkboxes and 'Select All / Deselect All' options
-
 package com.spr
 
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -59,7 +57,6 @@ class JsonToDtoToolWindowFactory : ToolWindowFactory {
 
             formPanel.add(formRow("Target Branch:", branchComboBox, refreshButton))
             formPanel.add(Box.createVerticalStrut(10))
-            formPanel.add(JBLabel("Select Files:"))
             formPanel.add(fileScrollPane)
             formPanel.add(Box.createVerticalStrut(5))
             formPanel.add(centerRow(selectAllButton, deselectAllButton))
@@ -196,7 +193,6 @@ class JsonToDtoToolWindowFactory : ToolWindowFactory {
                     action.actionPerformed(event)
                 }
             }
-            statusLabel.text = "DTOs generated successfully"
         }
     }
 }
