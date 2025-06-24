@@ -22,25 +22,25 @@ class JsonToDtoToolWindowFactory : ToolWindowFactory {
 
     class JsonToDtoToolWindow(private val project: Project) {
         private val branchComboBox = JComboBox<String>()
-        private val fileListPanel = JPanel()
-        private val fileScrollPane = JBScrollPane(fileListPanel)
-        private val selectedFiles = mutableSetOf<String>()
+        private val inputJsonDropdown = JComboBox<String>()
+        private val outputJsonDropdown = JComboBox<String>()
+        private val scenariosPanel = JPanel()
+        private val scenariosScrollPane = JBScrollPane(scenariosPanel)
+        private val selectedPairs = mutableListOf<Pair<String, String>>()
         private val statusLabel = JBLabel("Ready", SwingConstants.CENTER)
         private val refreshButton = JButton("Refresh")
-        private val generateButton = JButton("Generate DTOs")
-        private val selectAllButton = JButton("Select All")
-        private val deselectAllButton = JButton("Deselect All")
+        private val addScenarioButton = JButton("Add Scenario")
+        private val generateButton = JButton("Generate Scenarios")
         private val executor = Executors.newSingleThreadScheduledExecutor()
         private var fileListForDropdown: List<String> = emptyList()
 
         init {
-            fileListPanel.layout = BoxLayout(fileListPanel, BoxLayout.Y_AXIS)
-            fileScrollPane.preferredSize = Dimension(400, 200)
+            scenariosPanel.layout = BoxLayout(scenariosPanel, BoxLayout.Y_AXIS)
+            scenariosScrollPane.preferredSize = Dimension(400, 200)
 
             refreshButton.addActionListener { refreshBranches() }
-            generateButton.addActionListener { generateSelectedDtos() }
-            selectAllButton.addActionListener { updateAllSelections(true) }
-            deselectAllButton.addActionListener { updateAllSelections(false) }
+            addScenarioButton.addActionListener { addScenario() }
+            generateButton.addActionListener { generateScenarios() }
             branchComboBox.addActionListener { refreshJsonFiles() }
 
             refreshBranches()
@@ -57,15 +57,26 @@ class JsonToDtoToolWindowFactory : ToolWindowFactory {
 
             formPanel.add(formRow("Target Branch:", branchComboBox, refreshButton))
             formPanel.add(Box.createVerticalStrut(10))
-            formPanel.add(fileScrollPane)
+            formPanel.add(formRow("Input JSON:", inputJsonDropdown))
+            formPanel.add(formRow("Output JSON:", outputJsonDropdown))
             formPanel.add(Box.createVerticalStrut(5))
-            formPanel.add(centerRow(selectAllButton, deselectAllButton))
+            formPanel.add(centerRow(addScenarioButton))
+            formPanel.add(Box.createVerticalStrut(10))
+            formPanel.add(scenariosScrollPane)
             formPanel.add(Box.createVerticalStrut(10))
             formPanel.add(centerRow(generateButton))
             formPanel.add(Box.createVerticalStrut(10))
             formPanel.add(centerRow(statusLabel))
 
             return formPanel
+        }
+
+        private fun formRow(label: String, comboBox: JComboBox<String>): JPanel {
+            return JPanel(BorderLayout(10, 0)).apply {
+                maximumSize = Dimension(Int.MAX_VALUE, 30)
+                add(JBLabel(label), BorderLayout.WEST)
+                add(comboBox, BorderLayout.CENTER)
+            }
         }
 
         private fun formRow(label: String, comboBox: JComboBox<String>, button: JButton): JPanel {
@@ -84,17 +95,47 @@ class JsonToDtoToolWindowFactory : ToolWindowFactory {
             }
         }
 
-        private fun updateAllSelections(select: Boolean) {
-            fileListPanel.components.forEach {
-                if (it is JPanel) {
-                    val cb = it.components.lastOrNull() as? JCheckBox
-                    val file = cb?.actionCommand
-                    if (cb != null && file != null) {
-                        cb.isSelected = select
-                        if (select) selectedFiles.add(file) else selectedFiles.remove(file)
-                    }
+        private fun addScenario() {
+            val input = inputJsonDropdown.selectedItem as? String
+            val output = outputJsonDropdown.selectedItem as? String
+
+            if (input != null && output != null) {
+                if (input == output) {
+                    statusLabel.text = "Input and Output files cannot be the same."
+                    return
                 }
+                val pair = Pair(input, output)
+                if (!selectedPairs.contains(pair)) {
+                    selectedPairs.add(pair)
+                    rebuildScenariosList()
+                    statusLabel.text = "Scenario added."
+                } else {
+                    statusLabel.text = "This scenario pair already exists."
+                }
+            } else {
+                statusLabel.text = "Please select both an input and an output file."
             }
+        }
+
+        private fun rebuildScenariosList() {
+            scenariosPanel.removeAll()
+            selectedPairs.forEachIndexed { index, pair ->
+                val row = JPanel(BorderLayout()).apply {
+                    maximumSize = Dimension(Int.MAX_VALUE, 30)
+                    border = JBUI.Borders.empty(2)
+                    add(JBLabel("${pair.first}  ->  ${pair.second}"), BorderLayout.CENTER)
+                    val removeButton = JButton("Remove").apply {
+                        addActionListener {
+                            selectedPairs.removeAt(index)
+                            rebuildScenariosList()
+                        }
+                    }
+                    add(removeButton, BorderLayout.EAST)
+                }
+                scenariosPanel.add(row)
+            }
+            scenariosPanel.revalidate()
+            scenariosPanel.repaint()
         }
 
         private fun refreshBranches() {
@@ -138,8 +179,14 @@ class JsonToDtoToolWindowFactory : ToolWindowFactory {
 
                     SwingUtilities.invokeLater {
                         fileListForDropdown = files
-                        selectedFiles.clear()
-                        rebuildFileList()
+                        inputJsonDropdown.removeAllItems()
+                        outputJsonDropdown.removeAllItems()
+                        files.forEach {
+                            inputJsonDropdown.addItem(it)
+                            outputJsonDropdown.addItem(it)
+                        }
+                        selectedPairs.clear()
+                        rebuildScenariosList()
                         statusLabel.text = "Ready"
                     }
                 } catch (e: Exception) {
@@ -150,47 +197,20 @@ class JsonToDtoToolWindowFactory : ToolWindowFactory {
             }
         }
 
-        private fun rebuildFileList() {
-            fileListPanel.removeAll()
-            for (file in fileListForDropdown) {
-                val row = JPanel(BorderLayout()).apply {
-                    maximumSize = Dimension(Int.MAX_VALUE, 30)
-                    border = JBUI.Borders.empty(2)
-                    add(JBLabel(file), BorderLayout.WEST)
-
-                    val checkBox = JCheckBox().apply {
-                        actionCommand = file
-                        isSelected = false
-                        addActionListener {
-                            if (isSelected) selectedFiles.add(file) else selectedFiles.remove(file)
-                        }
-                    }
-                    add(checkBox, BorderLayout.EAST)
-                }
-                fileListPanel.add(row)
-            }
-            fileListPanel.revalidate()
-            fileListPanel.repaint()
-        }
-        private fun generateSelectedDtos() {
-            if (selectedFiles.isEmpty()) {
-                statusLabel.text = "Please select a JSON file"
+        private fun generateScenarios() {
+            if (selectedPairs.isEmpty()) {
+                statusLabel.text = "Please add at least one scenario."
                 return
             }
 
-            statusLabel.text = "Generating DTOs..."
-            selectedFiles.forEach { path ->
-                val file = project.baseDir.findFileByRelativePath(path)
-                if (file != null) {
-                    val action = JsonToDtoAction()
-                    val event = AnActionEvent.createFromDataContext("JSON_TO_DTO", null) {
-                        when (it) {
-                            CommonDataKeys.PROJECT.name -> project
-                            CommonDataKeys.VIRTUAL_FILE.name -> file
-                            else -> null
-                        }
-                    }
-                    action.actionPerformed(event)
+            statusLabel.text = "Generating scenarios..."
+            val action = JsonToDtoAction()
+            selectedPairs.forEach { pair ->
+                val inputFile = project.baseDir.findFileByRelativePath(pair.first)
+                val outputFile = project.baseDir.findFileByRelativePath(pair.second)
+
+                if (inputFile != null && outputFile != null) {
+                    action.generateScenario(project, inputFile, outputFile)
                 }
             }
         }

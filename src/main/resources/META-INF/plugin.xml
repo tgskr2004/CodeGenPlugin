@@ -12,7 +12,6 @@
         <notificationGroup id="JSON to DTO Generator" displayType="BALLOON" isLogByDefault="true"/>
         <toolWindow id="JSON to DTO" secondary="true" icon="AllIcons.General.Modified" anchor="right"
                    factoryClass="com.spr.JsonToDtoToolWindowFactory"/>
-        <projectService serviceImplementation="com.spr.JsonToDtoProjectService"/>
     </extensions>
 
     <actions>

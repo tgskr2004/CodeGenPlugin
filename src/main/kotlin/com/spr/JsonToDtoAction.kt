@@ -10,96 +10,142 @@ import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 class JsonToDtoAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
-        val file: VirtualFile? = e.getData(CommonDataKeys.VIRTUAL_FILE)
         val project = e.project ?: return
-
-        if (file != null && file.extension == "json") {
-            val notificationGroup = NotificationGroupManager.getInstance()
-                .getNotificationGroup("JSON to DTO Generator")
-
-            val progressNotification = notificationGroup.createNotification(
-                "Generating DTOs...",
-                "Please wait while DTOs, services, and tests are being generated.",
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("JSON to DTO Generator")
+            .createNotification(
+                "Info",
+                "Please use the 'JSON to DTO' tool window to generate scenarios.",
                 NotificationType.INFORMATION
             )
-            progressNotification.notify(project)
+            .notify(project)
+    }
 
-            try {
-                val jsonContent = String(file.contentsToByteArray())
-                val dtoClasses = generateDtoFromJson(jsonContent, file.nameWithoutExtension)
+    fun generateScenario(project: Project, inputFile: VirtualFile, outputFile: VirtualFile) {
+        val notificationGroup = NotificationGroupManager.getInstance()
+            .getNotificationGroup("JSON to DTO Generator")
 
-                val baseOutputDir = file.parent.path + "/DTOs"
-                val serviceDir = "$baseOutputDir/Service"
-                val testDir = "$baseOutputDir/Test"
-                File(baseOutputDir).mkdirs()
-                File(serviceDir).mkdirs()
-                File(testDir).mkdirs()
+        val scenarioName = findCommonPrefix(inputFile.nameWithoutExtension, outputFile.nameWithoutExtension)
+            .let { it.ifBlank { "Scenario" } }
+            .replace("-", " ").replace("_", " ")
+            .split(" ").joinToString("") { part -> part.replaceFirstChar { it.uppercase() } }
 
-                val generatedFiles = AtomicInteger(0)
-                ApplicationManager.getApplication().executeOnPooledThread {
-                    var totalPromptTokens = 0
-                    var totalCompletionTokens = 0
-                    var totalTokenCount = 0
-                    dtoClasses.forEach { (dtoClassName, dtoSource) ->
-                        try {
-                            val dtoFile = File("$baseOutputDir/$dtoClassName.java")
-                            dtoFile.writeText(dtoSource)
-                            generatedFiles.incrementAndGet()
 
-                            val dtoBaseName = dtoClassName.removeSuffix("Dto")
-                            val serviceResult = OpenAIClient.generateServiceFromDto(dtoSource, dtoClassName)
-                            if (serviceResult != null && serviceResult.content.isNotBlank()) {
-                                totalPromptTokens += serviceResult.promptTokens
-                                totalCompletionTokens += serviceResult.completionTokens
-                                totalTokenCount += serviceResult.totalTokens
+        val progressNotification = notificationGroup.createNotification(
+            "Generating Scenario: $scenarioName",
+            "Please wait while DTOs, services, and tests are being generated.",
+            NotificationType.INFORMATION
+        )
+        progressNotification.notify(project)
 
-                                val serviceFile = File("$serviceDir/${dtoBaseName}Service.java")
-                                serviceFile.writeText(serviceResult.content)
+        try {
+            val inputJsonContent = String(inputFile.contentsToByteArray())
+            val requestDtoName = "${scenarioName}Request"
+            val requestDtoClasses = generateDtoFromJson(inputJsonContent, requestDtoName)
 
-                                val testResult = OpenAIClient.generateTests(dtoClassName, dtoSource, serviceResult.content)
-                                if (testResult != null && testResult.content.isNotBlank()) {
-                                    totalPromptTokens += testResult.promptTokens
-                                    totalCompletionTokens += testResult.completionTokens
-                                    totalTokenCount += testResult.totalTokens
+            val outputJsonContent = String(outputFile.contentsToByteArray())
+            val responseDtoName = "${scenarioName}Response"
+            val responseDtoClasses = generateDtoFromJson(outputJsonContent, responseDtoName)
 
-                                    val testFile = File("$testDir/${dtoBaseName}ServiceGeneratedTest.java")
-                                    testFile.writeText(testResult.content)
-                                }
-                            }
+            val allDtoClasses = requestDtoClasses + responseDtoClasses
 
-                        } catch (ex: Exception) {
-                            ex.printStackTrace()
-                        }
-                    }
+            val baseOutputDir = inputFile.parent.path + "/${scenarioName}Scenario"
+            val dtoDir = "$baseOutputDir/DTOs"
+            val serviceDir = "$baseOutputDir/Service"
+            val testDir = "$baseOutputDir/Test"
+            File(dtoDir).mkdirs()
+            File(serviceDir).mkdirs()
+            File(testDir).mkdirs()
 
-                    progressNotification.expire()
-                    println("✅ Total token usage: prompt=$totalPromptTokens, completion=$totalCompletionTokens, total=$totalTokenCount")
-                    ApplicationManager.getApplication().invokeLater {
-                        val finalNotification = notificationGroup.createNotification(
-                            "DTO processing complete",
-                            "Generated DTOs, services, and test files in: $baseOutputDir",
-                            NotificationType.INFORMATION
-                        )
-                        finalNotification.notify(project)
+            ApplicationManager.getApplication().executeOnPooledThread {
+                var totalPromptTokens = 0
+                var totalCompletionTokens = 0
+                var totalTokenCount = 0
+
+                allDtoClasses.forEach { (dtoClassName, dtoSource) ->
+                    try {
+                        val dtoFile = File("$dtoDir/$dtoClassName.java")
+                        dtoFile.writeText(dtoSource)
+                    } catch (ex: Exception) {
+                        ex.printStackTrace()
                     }
                 }
 
-            } catch (ex: Exception) {
-                progressNotification.expire()
-                val errorNotification = notificationGroup.createNotification(
-                    "Error Generating DTOs",
-                    "Failed to generate files: ${ex.message}",
-                    NotificationType.ERROR
+                val requestDtoSource = requestDtoClasses["${requestDtoName}Dto"] ?: ""
+                val responseDtoSource = responseDtoClasses["${responseDtoName}Dto"] ?: ""
+
+                val serviceResult = OpenAIClient.generateServiceFromScenario(
+                    requestDtoSource = requestDtoSource,
+                    responseDtoSource = responseDtoSource,
+                    inputJsonContent = inputJsonContent,
+                    outputJsonContent = outputJsonContent
                 )
-                errorNotification.notify(project)
+                if (serviceResult != null && serviceResult.content.isNotBlank()) {
+                    totalPromptTokens += serviceResult.promptTokens
+                    totalCompletionTokens += serviceResult.completionTokens
+                    totalTokenCount += serviceResult.totalTokens
+
+                    val serviceName = "${scenarioName}Service"
+                    val serviceFile = File("$serviceDir/${serviceName}.java")
+                    serviceFile.writeText(serviceResult.content)
+
+                    val testClassName = "${serviceName}GeneratedTest"
+                    val testResult = OpenAIClient.generateTestsForScenario(
+                        requestDtoSource = requestDtoSource,
+                        responseDtoSource = responseDtoSource,
+                        serviceSource = serviceResult.content,
+                        inputJsonContent = inputJsonContent,
+                        outputJsonContent = outputJsonContent,
+                        testClassName = testClassName
+                    )
+                    if (testResult != null && testResult.content.isNotBlank()) {
+                        totalPromptTokens += testResult.promptTokens
+                        totalCompletionTokens += testResult.completionTokens
+                        totalTokenCount += testResult.totalTokens
+
+                        val testFile = File("$testDir/$testClassName.java")
+                        testFile.writeText(testResult.content)
+                    }
+                }
+
+                progressNotification.expire()
+                println("✅ Total token usage for scenario '$scenarioName': prompt=$totalPromptTokens, completion=$totalCompletionTokens, total=$totalTokenCount")
+                ApplicationManager.getApplication().invokeLater {
+                    val finalNotification = notificationGroup.createNotification(
+                        "Scenario Generation Complete: $scenarioName",
+                        "Generated files in: $baseOutputDir",
+                        NotificationType.INFORMATION
+                    )
+                    finalNotification.notify(project)
+                }
+            }
+
+        } catch (ex: Exception) {
+            progressNotification.expire()
+            val errorNotification = notificationGroup.createNotification(
+                "Error Generating Scenario",
+                "Failed to generate files for scenario '$scenarioName': ${ex.message}",
+                NotificationType.ERROR
+            )
+            errorNotification.notify(project)
+        }
+    }
+
+    private fun findCommonPrefix(s1: String, s2: String): String {
+        val minLength = minOf(s1.length, s2.length)
+        for (i in 0 until minLength) {
+            if (s1[i] != s2[i]) {
+                return s1.substring(0, i)
             }
         }
+        return s1.substring(0, minLength)
     }
 
     private fun generateDtoFromJson(json: String, rootClassName: String): Map<String, String> {
